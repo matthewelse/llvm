@@ -11,9 +11,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "RISCV.h"
+#include "RISCVMacroFusion.h"
 #include "RISCVTargetMachine.h"
 #include "RISCVTargetObjectFile.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/CodeGen/MachineScheduler.h"
 #include "llvm/CodeGen/Passes.h"
 #include "llvm/CodeGen/TargetLoweringObjectFileImpl.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
@@ -22,6 +24,11 @@
 #include "llvm/Support/TargetRegistry.h"
 #include "llvm/Target/TargetOptions.h"
 using namespace llvm;
+
+static cl::opt<bool>
+EnableMacroFusion("riscv-macro-fusion", cl::Hidden,
+            cl::desc("Enable macro-fusion optimsation pass for RISC-V"),
+            cl::init(false));
 
 extern "C" void LLVMInitializeRISCVTarget() {
   RegisterTargetMachine<RISCVTargetMachine> X(getTheRISCV32Target());
@@ -68,6 +75,15 @@ public:
 
   RISCVTargetMachine &getRISCVTargetMachine() const {
     return getTM<RISCVTargetMachine>();
+  }
+
+  ScheduleDAGInstrs *
+  createMachineScheduler(MachineSchedContext *ctx) const override {
+    ScheduleDAGMILive *DAG = createGenericSchedLive(ctx);
+    if (EnableMacroFusion) {
+        DAG->addMutation(createRISCVMacroFusionDAGMutation());
+    }
+    return DAG;
   }
 
   void addIRPasses() override;

@@ -76,6 +76,7 @@ public:
   bool hasStdExtF() const { return HasStdExtF; }
   bool hasStdExtD() const { return HasStdExtD; }
   bool hasStdExtC() const { return HasStdExtC; }
+  bool hasMacroFusion() const { return true; }
   bool is64Bit() const { return HasRV64; }
   bool enableLinkerRelax() const { return EnableLinkerRelax; }
   MVT getXLenVT() const { return XLenVT; }
