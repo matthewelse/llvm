@@ -69,8 +69,6 @@ def AMDGPUAddeSubeOp : SDTypeProfile<2, 3,
   [SDTCisSameAs<0, 2>, SDTCisSameAs<0, 3>, SDTCisVT<0, i32>, SDTCisVT<1, i1>, SDTCisVT<4, i1>]
 >;
 
-def SDT_AMDGPUTCRET : SDTypeProfile<0, 2, [SDTCisPtrTy<0>]>;
-
 //===----------------------------------------------------------------------===//
 // AMDGPU DAG Nodes
 //
@@ -95,7 +93,8 @@ def AMDGPUcall : SDNode<"AMDGPUISD::CALL",
   SDNPVariadic]
 >;
 
-def AMDGPUtc_return: SDNode<"AMDGPUISD::TC_RETURN", SDT_AMDGPUTCRET,
+def AMDGPUtc_return: SDNode<"AMDGPUISD::TC_RETURN",
+  SDTypeProfile<0, 3, [SDTCisPtrTy<0>]>,
   [SDNPHasChain, SDNPOptInGlue, SDNPVariadic]
 >;
 
@@ -369,6 +368,17 @@ def AMDGPUinterp_p2 : SDNode<"AMDGPUISD::INTERP_P2",
                       SDTypeProfile<1, 4, [SDTCisFP<0>]>,
                       [SDNPInGlue]>;
 
+def AMDGPUinterp_p1ll_f16 : SDNode<"AMDGPUISD::INTERP_P1LL_F16",
+                            SDTypeProfile<1, 7, [SDTCisFP<0>]>,
+                            [SDNPInGlue, SDNPOutGlue]>;
+
+def AMDGPUinterp_p1lv_f16 : SDNode<"AMDGPUISD::INTERP_P1LV_F16",
+                            SDTypeProfile<1, 9, [SDTCisFP<0>]>,
+                            [SDNPInGlue, SDNPOutGlue]>;
+
+def AMDGPUinterp_p2_f16 : SDNode<"AMDGPUISD::INTERP_P2_F16",
+                          SDTypeProfile<1, 8, [SDTCisFP<0>]>,
+                          [SDNPInGlue]>;
 
 def AMDGPUkill : SDNode<"AMDGPUISD::KILL", AMDGPUKillSDT,
   [SDNPHasChain, SDNPSideEffect]>;

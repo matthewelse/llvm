@@ -762,10 +762,6 @@ public:
     return RI.getRegSizeInBits(*getOpRegClass(MI, OpNo)) / 8;
   }
 
-  /// \returns true if it is legal for the operand at index \p OpNo
-  /// to read a VGPR.
-  bool canReadVGPR(const MachineInstr &MI, unsigned OpNo) const;
-
   /// Legalize the \p OpIndex operand of this instruction by inserting
   /// a MOV.  For example:
   /// ADD_I32_e32 VGPR0, 15
@@ -956,6 +952,12 @@ TargetInstrInfo::RegSubRegPair getRegSequenceSubReg(MachineInstr &MI,
 /// Following another subreg of a reg:subreg isn't supported.
 MachineInstr *getVRegSubRegDef(const TargetInstrInfo::RegSubRegPair &P,
                                MachineRegisterInfo &MRI);
+
+/// \brief Return true if EXEC mask isnt' changed between the def and
+/// all uses of VReg. Currently if def and uses are in different BBs -
+/// simply return false. Should be run on SSA.
+bool isEXECMaskConstantBetweenDefAndUses(unsigned VReg,
+                                         MachineRegisterInfo &MRI);
 
 namespace AMDGPU {
 

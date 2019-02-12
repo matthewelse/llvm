@@ -140,7 +140,8 @@ bool SIInstrInfo::isReallyTriviallyReMaterializable(const MachineInstr &MI,
   case AMDGPU::V_MOV_B32_e32:
   case AMDGPU::V_MOV_B32_e64:
   case AMDGPU::V_MOV_B64_PSEUDO:
-    return true;
+    // No implicit operands.
+    return MI.getNumOperands() == MI.getDesc().getNumOperands();
   default:
     return false;
   }
@@ -275,6 +276,11 @@ bool SIInstrInfo::getMemOperandWithOffset(MachineInstr &LdSt,
     if (OffsetImm) {
       // Normal, single offset LDS instruction.
       BaseOp = getNamedOperand(LdSt, AMDGPU::OpName::addr);
+      // TODO: ds_consume/ds_append use M0 for the base address. Is it safe to
+      // report that here?
+      if (!BaseOp)
+        return false;
+
       Offset = OffsetImm->getImm();
       assert(BaseOp->isReg() && "getMemOperandWithOffset only supports base "
                                 "operands of type register.");
@@ -3272,18 +3278,6 @@ const TargetRegisterClass *SIInstrInfo::getOpRegClass(const MachineInstr &MI,
   return RI.getRegClass(RCID);
 }
 
-bool SIInstrInfo::canReadVGPR(const MachineInstr &MI, unsigned OpNo) const {
-  switch (MI.getOpcode()) {
-  case AMDGPU::COPY:
-  case AMDGPU::REG_SEQUENCE:
-  case AMDGPU::PHI:
-  case AMDGPU::INSERT_SUBREG:
-    return RI.hasVGPRs(getOpRegClass(MI, 0));
-  default:
-    return RI.hasVGPRs(getOpRegClass(MI, OpNo));
-  }
-}
-
 void SIInstrInfo::legalizeOpWithMove(MachineInstr &MI, unsigned OpIdx) const {
   MachineBasicBlock::iterator I = MI;
   MachineBasicBlock *MBB = MI.getParent();
@@ -4952,7 +4946,23 @@ void SIInstrInfo::addUsersToMoveToVALUWorklist(
   for (MachineRegisterInfo::use_iterator I = MRI.use_begin(DstReg),
          E = MRI.use_end(); I != E;) {
     MachineInstr &UseMI = *I->getParent();
-    if (!canReadVGPR(UseMI, I.getOperandNo())) {
+
+    unsigned OpNo = 0;
+
+    switch (UseMI.getOpcode()) {
+    case AMDGPU::COPY:
+    case AMDGPU::WQM:
+    case AMDGPU::WWM:
+    case AMDGPU::REG_SEQUENCE:
+    case AMDGPU::PHI:
+    case AMDGPU::INSERT_SUBREG:
+      break;
+    default:
+      OpNo = I.getOperandNo();
+      break;
+    }
+
+    if (!RI.hasVGPRs(getOpRegClass(UseMI, OpNo))) {
       Worklist.insert(&UseMI);
 
       do {
@@ -5303,7 +5313,8 @@ unsigned SIInstrInfo::getInstSizeInBytes(const MachineInstr &MI) const {
     return 0;
   case TargetOpcode::BUNDLE:
     return getInstBundleSize(MI);
-  case TargetOpcode::INLINEASM: {
+  case TargetOpcode::INLINEASM:
+  case TargetOpcode::INLINEASM_BR: {
     const MachineFunction *MF = MI.getParent()->getParent();
     const char *AsmStr = MI.getOperand(0).getSymbolName();
     return getInlineAsmLength(AsmStr, *MF->getTarget().getMCAsmInfo());
@@ -5635,4 +5646,30 @@ MachineInstr *llvm::getVRegSubRegDef(const TargetInstrInfo::RegSubRegPair &P,
       return MI;
   }
   return nullptr;
+}
+
+bool llvm::isEXECMaskConstantBetweenDefAndUses(unsigned VReg,
+                                               MachineRegisterInfo &MRI) {
+  assert(MRI.isSSA() && "Must be run on SSA");
+  auto *TRI = MRI.getTargetRegisterInfo();
+
+  auto *DefI = MRI.getVRegDef(VReg);
+  auto *BB = DefI->getParent();
+
+  DenseSet<MachineInstr*> Uses;
+  for (auto &Use : MRI.use_nodbg_operands(VReg)) {
+    auto *I = Use.getParent();
+    if (I->getParent() != BB)
+      return false;
+    Uses.insert(I);
+  }
+
+  auto E = BB->end();
+  for (auto I = std::next(DefI->getIterator()); I != E; ++I) {
+    Uses.erase(&*I);
+    // don't check the last use
+    if (Uses.empty() || I->modifiesRegister(AMDGPU::EXEC, TRI))
+      break;
+  }
+  return Uses.empty();
 }

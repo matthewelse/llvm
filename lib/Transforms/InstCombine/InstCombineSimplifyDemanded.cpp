@@ -966,25 +966,15 @@ InstCombiner::simplifyShrShlDemandedBits(Instruction *Shr, const APInt &ShrOp1,
 }
 
 /// Implement SimplifyDemandedVectorElts for amdgcn buffer and image intrinsics.
+///
+/// Note: This only supports non-TFE/LWE image intrinsic calls; those have
+///       struct returns.
 Value *InstCombiner::simplifyAMDGCNMemoryIntrinsicDemanded(IntrinsicInst *II,
                                                            APInt DemandedElts,
-                                                           int DMaskIdx,
-                                                           int TFCIdx) {
+                                                           int DMaskIdx) {
   unsigned VWidth = II->getType()->getVectorNumElements();
   if (VWidth == 1)
     return nullptr;
-
-  // Need to change to new instruction format
-  ConstantInt *TFC = nullptr;
-  bool TFELWEEnabled = false;
-  if (TFCIdx > 0) {
-    TFC = dyn_cast<ConstantInt>(II->getArgOperand(TFCIdx));
-    TFELWEEnabled =    TFC->getZExtValue() & 0x1  // TFE
-                    || TFC->getZExtValue() & 0x2; // LWE
-  }
-
-  if (TFELWEEnabled)
-    return nullptr; // TFE not yet supported
 
   ConstantInt *NewDMask = nullptr;
 
@@ -1183,6 +1173,18 @@ Value *InstCombiner::SimplifyDemandedVectorElts(Value *V, APInt DemandedElts,
   switch (I->getOpcode()) {
   default: break;
 
+  case Instruction::GetElementPtr: {
+    // Conservatively track the demanded elements back through any vector
+    // operands we may have.  We know there must be at least one, or we
+    // wouldn't have a vector result to get here. Note that we intentionally
+    // merge the undef bits here since gepping with either an undef base or
+    // index results in undef. 
+    for (unsigned i = 0; i < I->getNumOperands(); i++)
+      if (I->getOperand(i)->getType()->isVectorTy())
+        simplifyAndSetOp(I, i, DemandedElts, UndefElts);
+
+    break;
+  }
   case Instruction::InsertElement: {
     // If this is a variable index, we don't know which element it overwrites.
     // demand exactly the same input as we produce.
@@ -1637,9 +1639,15 @@ Value *InstCombiner::SimplifyDemandedVectorElts(Value *V, APInt DemandedElts,
     case Intrinsic::amdgcn_struct_buffer_load_format:
       return simplifyAMDGCNMemoryIntrinsicDemanded(II, DemandedElts);
     default: {
-      if (getAMDGPUImageDMaskIntrinsic(II->getIntrinsicID()))
-        return simplifyAMDGCNMemoryIntrinsicDemanded(
-            II, DemandedElts, 0, II->getNumArgOperands() - 2);
+      if (getAMDGPUImageDMaskIntrinsic(II->getIntrinsicID())) {
+        LLVM_DEBUG(
+          Value *TFC = II->getArgOperand(II->getNumOperands() - 2);
+          assert(!isa<ConstantInt>(TFC) ||
+                 dyn_cast<ConstantInt>(TFC)->getZExtValue() == 0);
+        );
+
+        return simplifyAMDGCNMemoryIntrinsicDemanded(II, DemandedElts, 0);
+      }
 
       break;
     }

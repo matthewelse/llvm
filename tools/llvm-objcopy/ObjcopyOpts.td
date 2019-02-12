@@ -76,6 +76,16 @@ defm rename_section
 defm redefine_symbol
     : Eq<"redefine-sym", "Change the name of a symbol old to new">,
       MetaVarName<"old=new">;
+defm redefine_symbols
+    : Eq<"redefine-syms",
+         "Reads a list of symbol pairs from <filename> and runs as if "
+         "--redefine-sym=<old>=<new> is set for each one. <filename> "
+         "contains two symbols per line separated with whitespace and may "
+         "contain comments beginning with '#'. Leading and trailing "
+         "whitespace is stripped from each line. May be repeated to read "
+         "symbols from many files.">,         
+      MetaVarName<"filename">;
+
 defm keep_section : Eq<"keep-section", "Keep <section>">,
                     MetaVarName<"section">;
 defm only_section : Eq<"only-section", "Remove all but <section>">,
@@ -85,6 +95,13 @@ defm add_section
     : Eq<"add-section",
          "Make a section named <section> with the contents of <file>.">,
       MetaVarName<"section=file">;
+
+defm set_section_flags
+    : Eq<"set-section-flags",
+         "Set section flags for a given section. Flags supported for GNU "
+         "compatibility: alloc, load, noload, readonly, debug, code, data, "
+         "rom, share, contents, merge, strings.">,
+      MetaVarName<"section=flag1[,flag2,...]">;
 
 def strip_all
     : Flag<["-", "--"], "strip-all">,
@@ -117,10 +134,21 @@ def localize_hidden
           "Mark all symbols that have hidden or internal visibility as local">;
 defm localize_symbol : Eq<"localize-symbol", "Mark <symbol> as local">,
                        MetaVarName<"symbol">;
+defm localize_symbols
+    : Eq<"localize-symbols",
+         "Reads a list of symbols from <filename> and marks them local.">,
+      MetaVarName<"filename">;
+
 def L : JoinedOrSeparate<["-"], "L">, Alias<localize_symbol>;
 
 defm globalize_symbol : Eq<"globalize-symbol", "Mark <symbol> as global">,
                         MetaVarName<"symbol">;
+
+defm globalize_symbols
+    : Eq<"globalize-symbols",
+         "Reads a list of symbols from <filename> and marks them global.">,
+      MetaVarName<"filename">;
+
 defm keep_global_symbol
     : Eq<"keep-global-symbol",
          "Convert all symbols except <symbol> to local. May be repeated to "
@@ -139,15 +167,31 @@ defm keep_global_symbols
 
 defm weaken_symbol : Eq<"weaken-symbol", "Mark <symbol> as weak">,
                      MetaVarName<"symbol">;
+defm weaken_symbols
+    : Eq<"weaken-symbols",
+         "Reads a list of symbols from <filename> and marks them weak.">,
+      MetaVarName<"filename">;
+
 def W : JoinedOrSeparate<["-"], "W">, Alias<weaken_symbol>;
 def weaken : Flag<["-", "--"], "weaken">,
              HelpText<"Mark all global symbols as weak">;
+
+def discard_locals : Flag<["-", "--"], "discard-locals">,
+                     HelpText<"Remove compiler-generated local symbols, (e.g. "
+                              "symbols starting with .L)">;
+def X : Flag<["-"], "X">, Alias<discard_locals>;
+
 def discard_all
     : Flag<["-", "--"], "discard-all">,
       HelpText<"Remove all local symbols except file and section symbols">;
 def x : Flag<["-"], "x">, Alias<discard_all>;
 defm strip_symbol : Eq<"strip-symbol", "Remove symbol <symbol>">,
                     MetaVarName<"symbol">;
+defm strip_symbols
+    : Eq<"strip-symbols",
+         "Reads a list of symbols from <filename> and removes them.">,
+      MetaVarName<"filename">;
+
 def N : JoinedOrSeparate<["-"], "N">, Alias<strip_symbol>;
 defm keep_symbol : Eq<"keep-symbol", "Do not remove symbol <symbol>">,
                    MetaVarName<"symbol">;
@@ -180,3 +224,7 @@ defm build_id_link_output
     : Eq<"build-id-link-output", "Hard-link the output to <dir>/xx/xxx<suffix> "
                                  "name derived from hex build ID">,
       MetaVarName<"suffix">;
+
+def regex
+    : Flag<["-", "--"], "regex">,
+      HelpText<"Permit regular expressions in name comparison">;

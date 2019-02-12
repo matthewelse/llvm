@@ -900,6 +900,9 @@ bool AsmParser::Run(bool NoInitialTextSection, bool NoFinalize) {
       eatToEndOfStatement();
   }
 
+  // Make sure we get proper DWARF even for empty files.
+  (void)enabledGenDwarfForAssembly();
+
   getTargetParser().onEndOfFile();
   printPendingErrors();
 
@@ -3367,10 +3370,11 @@ bool AsmParser::parseDirectiveFile(SMLoc DirectiveLoc) {
   }
 
   if (FileNumber == -1) {
-    if (!getContext().getAsmInfo()->hasSingleParameterDotFile())
-      return Error(DirectiveLoc,
-                   "target does not support '.file' without a number");
-    getStreamer().EmitFileDirective(Filename);
+    // Ignore the directive if there is no number and the target doesn't support
+    // numberless .file directives. This allows some portability of assembler
+    // between different object file formats.
+    if (getContext().getAsmInfo()->hasSingleParameterDotFile())
+      getStreamer().EmitFileDirective(Filename);
   } else {
     // In case there is a -g option as well as debug info from directive .file,
     // we turn off the -g option, directly use the existing debug info instead.
@@ -5038,9 +5042,9 @@ bool AsmParser::parseDirectiveIfdef(SMLoc DirectiveLoc, bool expect_defined) {
     MCSymbol *Sym = getContext().lookupSymbol(Name);
 
     if (expect_defined)
-      TheCondState.CondMet = (Sym && !Sym->isUndefined());
+      TheCondState.CondMet = (Sym && !Sym->isUndefined(false));
     else
-      TheCondState.CondMet = (!Sym || Sym->isUndefined());
+      TheCondState.CondMet = (!Sym || Sym->isUndefined(false));
     TheCondState.Ignore = !TheCondState.CondMet;
   }
 
