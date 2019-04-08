@@ -294,6 +294,9 @@ public:
     // The default action for one element vectors is to scalarize
     if (VT.getVectorNumElements() == 1)
       return TypeScalarizeVector;
+    // The default action for an odd-width vector is to widen.
+    if (!VT.isPow2VectorType())
+      return TypeWidenVector;
     // The default action for other vectors is to promote
     return TypePromoteInteger;
   }
@@ -778,7 +781,8 @@ public:
   /// Returns true if the target can instruction select the specified FP
   /// immediate natively. If false, the legalizer will materialize the FP
   /// immediate as a load from a constant pool.
-  virtual bool isFPImmLegal(const APFloat &/*Imm*/, EVT /*VT*/) const {
+  virtual bool isFPImmLegal(const APFloat &/*Imm*/, EVT /*VT*/,
+			    bool ForCodeSize = false) const {
     return false;
   }
 
@@ -949,12 +953,10 @@ public:
   /// getEstimatedNumberOfCaseClusters() in BasicTTIImpl.
   virtual bool isSuitableForJumpTable(const SwitchInst *SI, uint64_t NumCases,
                                       uint64_t Range) const {
-    const bool OptForSize = SI->getParent()->getParent()->optForSize();
+    const bool OptForSize = SI->getParent()->getParent()->hasOptSize();
     const unsigned MinDensity = getMinimumJumpTableDensity(OptForSize);
     const unsigned MaxJumpTableSize =
-        OptForSize || getMaximumJumpTableSize() == 0
-            ? UINT_MAX
-            : getMaximumJumpTableSize();
+        OptForSize ? UINT_MAX : getMaximumJumpTableSize();
     // Check whether a range of clusters is dense enough for a jump table.
     if (Range <= MaxJumpTableSize &&
         (NumCases * 100 >= Range * MinDensity)) {
@@ -2439,6 +2441,31 @@ public:
     return false;
   }
 
+  /// Return true if extraction of a scalar element from the given vector type
+  /// at the given index is cheap. For example, if scalar operations occur on
+  /// the same register file as vector operations, then an extract element may
+  /// be a sub-register rename rather than an actual instruction.
+  virtual bool isExtractVecEltCheap(EVT VT, unsigned Index) const {
+    return false;
+  }
+
+  /// Try to convert math with an overflow comparison into the corresponding DAG
+  /// node operation. Targets may want to override this independently of whether
+  /// the operation is legal/custom for the given type because it may obscure
+  /// matching of other patterns.
+  virtual bool shouldFormOverflowOp(unsigned Opcode, EVT VT) const {
+    // TODO: The default logic is inherited from code in CodeGenPrepare.
+    // The opcode should not make a difference by default?
+    if (Opcode != ISD::UADDO)
+      return false;
+
+    // Allow the transform as long as we have an integer type that is not
+    // obviously illegal and unsupported.
+    if (VT.isVector())
+      return false;
+    return VT.isSimple() || !isOperationExpand(Opcode, VT);
+  }
+
   // Return true if it is profitable to use a scalar input to a BUILD_VECTOR
   // even if the vector itself has multiple uses.
   virtual bool aggressivelyPreferBuildVectorSources(EVT VecVT) const {
@@ -2858,11 +2885,10 @@ public:
 
   /// Returns a pair of (return value, chain).
   /// It is an error to pass RTLIB::UNKNOWN_LIBCALL as \p LC.
-  std::pair<SDValue, SDValue> makeLibCall(SelectionDAG &DAG, RTLIB::Libcall LC,
-                                          EVT RetVT, ArrayRef<SDValue> Ops,
-                                          bool isSigned, const SDLoc &dl,
-                                          bool doesNotReturn = false,
-                                          bool isReturnValueUsed = true) const;
+  std::pair<SDValue, SDValue> makeLibCall(
+      SelectionDAG &DAG, RTLIB::Libcall LC, EVT RetVT, ArrayRef<SDValue> Ops,
+      bool isSigned, const SDLoc &dl, bool doesNotReturn = false,
+      bool isReturnValueUsed = true, bool isPostTypeLegalization = false) const;
 
   /// Check whether parameters to a call that are passed in callee saved
   /// registers are the same as from the calling function.  This needs to be
@@ -3663,7 +3689,7 @@ public:
                                             SelectionDAG &DAG) const;
 
   // Lower custom output constraints. If invalid, return SDValue().
-  virtual SDValue LowerAsmOutputForConstraint(SDValue &Chain, SDValue *Flag,
+  virtual SDValue LowerAsmOutputForConstraint(SDValue &Chain, SDValue &Flag,
                                               SDLoc DL,
                                               const AsmOperandInfo &OpInfo,
                                               SelectionDAG &DAG) const;
@@ -3871,6 +3897,15 @@ public:
   /// Method for building the DAG expansion of ISD::SMULFIX. This method accepts
   /// integers as its arguments.
   SDValue expandFixedPointMul(SDNode *Node, SelectionDAG &DAG) const;
+
+  /// Method for building the DAG expansion of ISD::[US]MULO. Returns whether
+  /// expansion was successful and populates the Result and Overflow arguments.
+  bool expandMULO(SDNode *Node, SDValue &Result, SDValue &Overflow,
+                  SelectionDAG &DAG) const;
+
+  /// Expand a VECREDUCE_* into an explicit calculation. If Count is specified,
+  /// only the first Count elements of the vector are used.
+  SDValue expandVecReduce(SDNode *Node, SelectionDAG &DAG) const;
 
   //===--------------------------------------------------------------------===//
   // Instruction Emitting Hooks

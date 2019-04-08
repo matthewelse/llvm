@@ -334,8 +334,12 @@ class ResourceManager {
   // Used to quickly identify groups that own a particular resource unit.
   std::vector<uint64_t> Resource2Groups;
 
-  // A table to map processor resource IDs to processor resource masks.
+  // A table that maps processor resource IDs to processor resource masks.
   SmallVector<uint64_t, 8> ProcResID2Mask;
+
+  // A table that maps resource indices to actual processor resource IDs in the
+  // scheduling model.
+  SmallVector<unsigned, 8> ResIndex2ProcResID;
 
   // Keeps track of which resources are busy, and how many cycles are left
   // before those become usable again.
@@ -346,6 +350,9 @@ class ResourceManager {
 
   // Set of processor resource units that are available during this cycle.
   uint64_t AvailableProcResUnits;
+
+  // Set of processor resource groups that are currently reserved.
+  uint64_t ReservedResourceGroups;
 
   // Returns the actual resource unit that will be used.
   ResourceRef selectPipe(uint64_t ResourceID);
@@ -397,7 +404,7 @@ public:
   // Returns a zero mask if resources requested by Desc are all available during
   // this cycle. It returns a non-zero mask value only if there are unavailable
   // processor resources; each bit set in the mask represents a busy processor
-  // resource unit.
+  // resource unit or a reserved processor resource group.
   uint64_t checkAvailability(const InstrDesc &Desc) const;
 
   uint64_t getProcResUnitMask() const { return ProcResUnitMask; }

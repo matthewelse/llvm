@@ -124,10 +124,19 @@ private:
   /// result elements, and replacing the vreg of the operand in place.
   void moreElementsVectorDst(MachineInstr &MI, LLT MoreTy, unsigned OpIdx);
 
+  /// Legalize a single operand \p OpIdx of the machine instruction \p MI as a
+  /// Use by producing a vector with undefined high elements, extracting the
+  /// original vector type, and replacing the vreg of the operand in place.
+  void moreElementsVectorSrc(MachineInstr &MI, LLT MoreTy, unsigned OpIdx);
+
   LegalizeResult
   widenScalarMergeValues(MachineInstr &MI, unsigned TypeIdx, LLT WideTy);
   LegalizeResult
   widenScalarUnmergeValues(MachineInstr &MI, unsigned TypeIdx, LLT WideTy);
+  LegalizeResult
+  widenScalarExtract(MachineInstr &MI, unsigned TypeIdx, LLT WideTy);
+  LegalizeResult
+  widenScalarInsert(MachineInstr &MI, unsigned TypeIdx, LLT WideTy);
 
   /// Helper function to split a wide generic register into bitwise blocks with
   /// the given Type (which implies the number of blocks needed). The generic
@@ -154,6 +163,13 @@ private:
                    LLT PartTy, ArrayRef<unsigned> PartRegs,
                    LLT LeftoverTy = LLT(), ArrayRef<unsigned> LeftoverRegs = {});
 
+  /// Perform generic multiplication of values held in multiple registers.
+  /// Generated instructions use only types NarrowTy and i1.
+  /// Destination can be same or two times size of the source.
+  void multiplyRegisters(SmallVectorImpl<unsigned> &DstRegs,
+                         ArrayRef<unsigned> Src1Regs,
+                         ArrayRef<unsigned> Src2Regs, LLT NarrowTy);
+
   LegalizeResult fewerElementsVectorImplicitDef(MachineInstr &MI,
                                                 unsigned TypeIdx, LLT NarrowTy);
 
@@ -177,6 +193,12 @@ private:
   LegalizeResult
   fewerElementsVectorSelect(MachineInstr &MI, unsigned TypeIdx, LLT NarrowTy);
 
+  LegalizeResult fewerElementsVectorPhi(MachineInstr &MI,
+                                        unsigned TypeIdx, LLT NarrowTy);
+
+  LegalizeResult moreElementsVectorPhi(MachineInstr &MI, unsigned TypeIdx,
+                                       LLT MoreTy);
+
   LegalizeResult
   reduceLoadStoreWidth(MachineInstr &MI, unsigned TypeIdx, LLT NarrowTy);
 
@@ -184,7 +206,9 @@ private:
                                              LLT HalfTy, LLT ShiftAmtTy);
 
   LegalizeResult narrowScalarShift(MachineInstr &MI, unsigned TypeIdx, LLT Ty);
-  LegalizeResult narrowScalarMul(MachineInstr &MI, unsigned TypeIdx, LLT Ty);
+  LegalizeResult narrowScalarMul(MachineInstr &MI, LLT Ty);
+  LegalizeResult narrowScalarExtract(MachineInstr &MI, unsigned TypeIdx, LLT Ty);
+  LegalizeResult narrowScalarInsert(MachineInstr &MI, unsigned TypeIdx, LLT Ty);
 
   LegalizeResult narrowScalarSelect(MachineInstr &MI, unsigned TypeIdx, LLT Ty);
 

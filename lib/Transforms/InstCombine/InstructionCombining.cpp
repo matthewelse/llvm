@@ -1375,7 +1375,8 @@ Instruction *InstCombiner::foldVectorBinop(BinaryOperator &Inst) {
   if (match(LHS, m_ShuffleVector(m_Value(L0), m_Value(L1), m_Constant(Mask))) &&
       match(RHS, m_ShuffleVector(m_Value(R0), m_Value(R1), m_Specific(Mask))) &&
       LHS->hasOneUse() && RHS->hasOneUse() &&
-      cast<ShuffleVectorInst>(LHS)->isConcat()) {
+      cast<ShuffleVectorInst>(LHS)->isConcat() &&
+      cast<ShuffleVectorInst>(RHS)->isConcat()) {
     // This transform does not have the speculative execution constraint as
     // below because the shuffle is a concatenation. The new binops are
     // operating on exactly the same elements as the existing binop.
@@ -1412,6 +1413,30 @@ Instruction *InstCombiner::foldVectorBinop(BinaryOperator &Inst) {
       (LHS->hasOneUse() || RHS->hasOneUse() || LHS == RHS)) {
     // Op(shuffle(V1, Mask), shuffle(V2, Mask)) -> shuffle(Op(V1, V2), Mask)
     return createBinOpShuffle(V1, V2, Mask);
+  }
+
+  // If both arguments of a commutative binop are select-shuffles that use the
+  // same mask with commuted operands, the shuffles are unnecessary.
+  if (Inst.isCommutative() &&
+      match(LHS, m_ShuffleVector(m_Value(V1), m_Value(V2), m_Constant(Mask))) &&
+      match(RHS, m_ShuffleVector(m_Specific(V2), m_Specific(V1),
+                                 m_Specific(Mask)))) {
+    auto *LShuf = cast<ShuffleVectorInst>(LHS);
+    auto *RShuf = cast<ShuffleVectorInst>(RHS);
+    // TODO: Allow shuffles that contain undefs in the mask?
+    //       That is legal, but it reduces undef knowledge.
+    // TODO: Allow arbitrary shuffles by shuffling after binop?
+    //       That might be legal, but we have to deal with poison.
+    if (LShuf->isSelect() && !LShuf->getMask()->containsUndefElement() &&
+        RShuf->isSelect() && !RShuf->getMask()->containsUndefElement()) {
+      // Example:
+      // LHS = shuffle V1, V2, <0, 5, 6, 3>
+      // RHS = shuffle V2, V1, <0, 5, 6, 3>
+      // LHS + RHS --> (V10+V20, V21+V11, V22+V12, V13+V23) --> V1 + V2
+      Instruction *NewBO = BinaryOperator::Create(Opcode, V1, V2);
+      NewBO->copyIRFlags(&Inst);
+      return NewBO;
+    }
   }
 
   // If one argument is a shuffle within one vector and the other is a constant,
@@ -1555,6 +1580,23 @@ Instruction *InstCombiner::visitGetElementPtrInst(GetElementPtrInst &GEP) {
   Type *GEPEltType = GEP.getSourceElementType();
   if (Value *V = SimplifyGEPInst(GEPEltType, Ops, SQ.getWithInstruction(&GEP)))
     return replaceInstUsesWith(GEP, V);
+
+  // For vector geps, use the generic demanded vector support.
+  if (GEP.getType()->isVectorTy()) {
+    auto VWidth = GEP.getType()->getVectorNumElements();
+    APInt UndefElts(VWidth, 0);
+    APInt AllOnesEltMask(APInt::getAllOnesValue(VWidth));
+    if (Value *V = SimplifyDemandedVectorElts(&GEP, AllOnesEltMask,
+                                              UndefElts)) {
+      if (V != &GEP)
+        return replaceInstUsesWith(GEP, V);
+      return &GEP;
+    }
+
+    // TODO: 1) Scalarize splat operands, 2) scalarize entire instruction if
+    // possible (decide on canonical form for pointer broadcast), 3) exploit
+    // undef elements to decrease demanded bits  
+  }
 
   Value *PtrOp = GEP.getOperand(0);
 
@@ -3099,13 +3141,35 @@ static bool TryToSinkInstruction(Instruction *I, BasicBlock *DestBlock) {
   ++NumSunkInst;
 
   // Also sink all related debug uses from the source basic block. Otherwise we
-  // get debug use before the def.
-  SmallVector<DbgVariableIntrinsic *, 1> DbgUsers;
+  // get debug use before the def. Attempt to salvage debug uses first, to
+  // maximise the range variables have location for. If we cannot salvage, then
+  // mark the location undef: we know it was supposed to receive a new location
+  // here, but that computation has been sunk.
+  SmallVector<DbgVariableIntrinsic *, 2> DbgUsers;
   findDbgUsers(DbgUsers, I);
-  for (auto *DII : DbgUsers) {
+  for (auto *DII : reverse(DbgUsers)) {
     if (DII->getParent() == SrcBlock) {
-      DII->moveBefore(&*InsertPos);
-      LLVM_DEBUG(dbgs() << "SINK: " << *DII << '\n');
+      // dbg.value is in the same basic block as the sunk inst, see if we can
+      // salvage it. Clone a new copy of the instruction: on success we need
+      // both salvaged and unsalvaged copies.
+      SmallVector<DbgVariableIntrinsic *, 1> TmpUser{
+          cast<DbgVariableIntrinsic>(DII->clone())};
+
+      if (!salvageDebugInfoForDbgValues(*I, TmpUser)) {
+        // We are unable to salvage: sink the cloned dbg.value, and mark the
+        // original as undef, terminating any earlier variable location.
+        LLVM_DEBUG(dbgs() << "SINK: " << *DII << '\n');
+        TmpUser[0]->insertBefore(&*InsertPos);
+        Value *Undef = UndefValue::get(I->getType());
+        DII->setOperand(0, MetadataAsValue::get(DII->getContext(),
+                                                ValueAsMetadata::get(Undef)));
+      } else {
+        // We successfully salvaged: place the salvaged dbg.value in the
+        // original location, and move the unmodified dbg.value to sink with
+        // the sunk inst.
+        TmpUser[0]->insertBefore(DII);
+        DII->moveBefore(&*InsertPos);
+      }
     }
   }
   return true;
@@ -3300,7 +3364,8 @@ static bool AddReachableCodeToWorklist(BasicBlock *BB, const DataLayout &DL,
       if (isInstructionTriviallyDead(Inst, TLI)) {
         ++NumDeadInst;
         LLVM_DEBUG(dbgs() << "IC: DCE: " << *Inst << '\n');
-        salvageDebugInfo(*Inst);
+        if (!salvageDebugInfo(*Inst))
+          replaceDbgUsesWithUndef(Inst);
         Inst->eraseFromParent();
         MadeIRChange = true;
         continue;
@@ -3443,7 +3508,7 @@ static bool combineInstructionsOverFunction(
 
     MadeIRChange |= prepareICWorklistFromFunction(F, DL, &TLI, Worklist);
 
-    InstCombiner IC(Worklist, Builder, F.optForMinSize(), ExpensiveCombines, AA,
+    InstCombiner IC(Worklist, Builder, F.hasMinSize(), ExpensiveCombines, AA,
                     AC, TLI, DT, ORE, DL, LI);
     IC.MaxArraySizeForCombine = MaxArraySize;
 

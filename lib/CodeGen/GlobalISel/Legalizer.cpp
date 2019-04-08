@@ -155,11 +155,13 @@ bool Legalizer::runOnMachineFunction(MachineFunction &MF) {
       if (!isPreISelGenericOpcode(MI.getOpcode()))
         continue;
       if (isArtifact(MI))
-        ArtifactList.insert(&MI);
+        ArtifactList.deferred_insert(&MI);
       else
-        InstList.insert(&MI);
+        InstList.deferred_insert(&MI);
     }
   }
+  ArtifactList.finalize();
+  InstList.finalize();
   std::unique_ptr<MachineIRBuilder> MIRBuilder;
   GISelCSEInfo *CSEInfo = nullptr;
   bool EnableCSE = EnableCSEInLegalizer.getNumOccurrences()
@@ -223,7 +225,8 @@ bool Legalizer::runOnMachineFunction(MachineFunction &MF) {
         continue;
       }
       SmallVector<MachineInstr *, 4> DeadInstructions;
-      if (ArtCombiner.tryCombineInstruction(MI, DeadInstructions)) {
+      if (ArtCombiner.tryCombineInstruction(MI, DeadInstructions,
+                                            WrapperObserver)) {
         for (auto *DeadMI : DeadInstructions) {
           LLVM_DEBUG(dbgs() << *DeadMI << "Is dead\n");
           RemoveDeadInstFromLists(DeadMI);

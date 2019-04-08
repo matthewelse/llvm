@@ -736,7 +736,9 @@ def abscondbrtarget : Operand<OtherVT> {
 def calltarget : Operand<iPTR> {
   let PrintMethod = "printBranchOperand";
   let EncoderMethod = "getDirectBrEncoding";
+  let DecoderMethod = "DecodePCRel24BranchTarget";
   let ParserMatchClass = PPCDirectBrAsmOperand;
+  let OperandType = "OPERAND_PCREL";
 }
 def abscalltarget : Operand<iPTR> {
   let PrintMethod = "printAbsBranchOperand";
@@ -1306,6 +1308,15 @@ let isTerminator = 1, isBarrier = 1, PPC970_Unit = 7 in {
                                 "bcctr 4, $bi, 0", IIC_BrB, []>;
     }
   }
+}
+
+// Set the float rounding mode.
+let Uses = [RM], Defs = [RM] in { 
+def SETRNDi : PPCCustomInserterPseudo<(outs f8rc:$FRT), (ins u2imm:$RND),
+                    "#SETRNDi", [(set f64:$FRT, (int_ppc_setrnd (i32 imm:$RND)))]>;
+
+def SETRND : PPCCustomInserterPseudo<(outs f8rc:$FRT), (ins gprc:$in),
+                    "#SETRND", [(set f64:$FRT, (int_ppc_setrnd gprc :$in))]>;
 }
 
 let Defs = [LR] in

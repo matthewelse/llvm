@@ -164,6 +164,12 @@ rarely have to include this file directly).
   efficient to use the ``InstVisitor`` class to dispatch over the instruction
   type directly.
 
+``isa_and_nonnull<>``:
+  The ``isa_and_nonnull<>`` operator works just like the ``isa<>`` operator,
+  except that it allows for a null pointer as an argument (which it then
+  returns false).  This can sometimes be useful, allowing you to combine several
+  null checks into one.
+
 ``cast_or_null<>``:
   The ``cast_or_null<>`` operator works just like the ``cast<>`` operator,
   except that it allows for a null pointer as an argument (which it then
@@ -2659,7 +2665,7 @@ Iterating over def-use & use-def chains
 
 Frequently, we might have an instance of the ``Value`` class (`doxygen
 <http://llvm.org/doxygen/classllvm_1_1Value.html>`__) and we want to determine
-which ``User`` s use the ``Value``.  The list of all ``User``\ s of a particular
+which ``User``\ s use the ``Value``.  The list of all ``User``\ s of a particular
 ``Value`` is called a *def-use* chain.  For example, let's say we have a
 ``Function*`` named ``F`` to a particular function ``foo``.  Finding all of the
 instructions that *use* ``foo`` is as simple as iterating over the *def-use*

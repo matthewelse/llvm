@@ -101,13 +101,35 @@ void llvm::DeleteDeadBlocks(ArrayRef <BasicBlock *> BBs, DomTreeUpdater *DTU,
   DetatchDeadBlocks(BBs, DTU ? &Updates : nullptr, KeepOneInputPHIs);
 
   if (DTU)
-    DTU->applyUpdates(Updates, /*ForceRemoveDuplicates*/ true);
+    DTU->applyUpdatesPermissive(Updates);
 
   for (BasicBlock *BB : BBs)
     if (DTU)
       DTU->deleteBB(BB);
     else
       BB->eraseFromParent();
+}
+
+bool llvm::EliminateUnreachableBlocks(Function &F, DomTreeUpdater *DTU,
+                                      bool KeepOneInputPHIs) {
+  df_iterator_default_set<BasicBlock*> Reachable;
+
+  // Mark all reachable blocks.
+  for (BasicBlock *BB : depth_first_ext(&F, Reachable))
+    (void)BB/* Mark all reachable blocks */;
+
+  // Collect all dead blocks.
+  std::vector<BasicBlock*> DeadBlocks;
+  for (Function::iterator I = F.begin(), E = F.end(); I != E; ++I)
+    if (!Reachable.count(&*I)) {
+      BasicBlock *BB = &*I;
+      DeadBlocks.push_back(BB);
+    }
+
+  // Delete the dead blocks.
+  DeleteDeadBlocks(DeadBlocks, DTU, KeepOneInputPHIs);
+
+  return !DeadBlocks.empty();
 }
 
 void llvm::FoldSingleEntryPHINodes(BasicBlock *BB,
@@ -186,7 +208,9 @@ bool llvm::MergeBlockIntoPredecessor(BasicBlock *BB, DomTreeUpdater *DTU,
     Updates.push_back({DominatorTree::Delete, PredBB, BB});
     for (auto I = succ_begin(BB), E = succ_end(BB); I != E; ++I) {
       Updates.push_back({DominatorTree::Delete, BB, *I});
-      Updates.push_back({DominatorTree::Insert, PredBB, *I});
+      // This successor of BB may already have PredBB as a predecessor.
+      if (llvm::find(successors(PredBB), *I) == succ_end(PredBB))
+        Updates.push_back({DominatorTree::Insert, PredBB, *I});
     }
   }
 
@@ -235,7 +259,7 @@ bool llvm::MergeBlockIntoPredecessor(BasicBlock *BB, DomTreeUpdater *DTU,
            isa<UnreachableInst>(BB->getTerminator()) &&
            "The successor list of BB isn't empty before "
            "applying corresponding DTU updates.");
-    DTU->applyUpdates(Updates, /*ForceRemoveDuplicates*/ true);
+    DTU->applyUpdatesPermissive(Updates);
     DTU->deleteBB(BB);
   }
 
@@ -721,7 +745,7 @@ ReturnInst *llvm::FoldReturnIntoUncondBranch(ReturnInst *RI, BasicBlock *BB,
   UncondBranch->eraseFromParent();
 
   if (DTU)
-    DTU->deleteEdge(Pred, BB);
+    DTU->applyUpdates({{DominatorTree::Delete, Pred, BB}});
 
   return cast<ReturnInst>(NewRet);
 }
@@ -730,18 +754,23 @@ Instruction *llvm::SplitBlockAndInsertIfThen(Value *Cond,
                                              Instruction *SplitBefore,
                                              bool Unreachable,
                                              MDNode *BranchWeights,
-                                             DominatorTree *DT, LoopInfo *LI) {
+                                             DominatorTree *DT, LoopInfo *LI,
+                                             BasicBlock *ThenBlock) {
   BasicBlock *Head = SplitBefore->getParent();
   BasicBlock *Tail = Head->splitBasicBlock(SplitBefore->getIterator());
   Instruction *HeadOldTerm = Head->getTerminator();
   LLVMContext &C = Head->getContext();
-  BasicBlock *ThenBlock = BasicBlock::Create(C, "", Head->getParent(), Tail);
   Instruction *CheckTerm;
-  if (Unreachable)
-    CheckTerm = new UnreachableInst(C, ThenBlock);
-  else
-    CheckTerm = BranchInst::Create(Tail, ThenBlock);
-  CheckTerm->setDebugLoc(SplitBefore->getDebugLoc());
+  bool CreateThenBlock = (ThenBlock == nullptr);
+  if (CreateThenBlock) {
+    ThenBlock = BasicBlock::Create(C, "", Head->getParent(), Tail);
+    if (Unreachable)
+      CheckTerm = new UnreachableInst(C, ThenBlock);
+    else
+      CheckTerm = BranchInst::Create(Tail, ThenBlock);
+    CheckTerm->setDebugLoc(SplitBefore->getDebugLoc());
+  } else
+    CheckTerm = ThenBlock->getTerminator();
   BranchInst *HeadNewTerm =
     BranchInst::Create(/*ifTrue*/ThenBlock, /*ifFalse*/Tail, Cond);
   HeadNewTerm->setMetadata(LLVMContext::MD_prof, BranchWeights);
@@ -756,7 +785,10 @@ Instruction *llvm::SplitBlockAndInsertIfThen(Value *Cond,
         DT->changeImmediateDominator(Child, NewNode);
 
       // Head dominates ThenBlock.
-      DT->addNewBlock(ThenBlock, Head);
+      if (CreateThenBlock)
+        DT->addNewBlock(ThenBlock, Head);
+      else
+        DT->changeImmediateDominator(ThenBlock, Head);
     }
   }
 
