@@ -312,6 +312,7 @@ nextIfDebug(MachineBasicBlock::iterator I,
 
 /// Instantiate a ScheduleDAGInstrs that will be owned by the caller.
 ScheduleDAGInstrs *MachineScheduler::createMachineScheduler() {
+  LLVM_DEBUG(dbgs() << "MachineScheduler::createMachineScheduler()\n");
   // Select the scheduler, or set the default.
   MachineSchedRegistry::ScheduleDAGCtor Ctor = MachineSchedOpt;
   if (Ctor != useDefaultMachineSched)
@@ -356,8 +357,9 @@ ScheduleDAGInstrs *PostMachineScheduler::createPostMachineScheduler() {
 /// design would be to split blocks at scheduling boundaries, but LLVM has a
 /// general bias against block splitting purely for implementation simplicity.
 bool MachineScheduler::runOnMachineFunction(MachineFunction &mf) {
-  if (skipFunction(mf.getFunction()))
-    return false;
+    LLVM_DEBUG(dbgs() << "runOnMachineFunction called\n");
+  //if (skipFunction(mf.getFunction())) 
+  //  return false;
 
   if (EnableMachineSched.getNumOccurrences()) {
     if (!EnableMachineSched)

@@ -3,14 +3,20 @@
 #include "RISCVMacroFusion.h"
 #include "RISCVSubtarget.h"
 
+#define DEBUG_TYPE "rv_fusion"
+
 using namespace llvm;
 
 static bool shouldScheduleAdjacent(const TargetInstrInfo &tii, const TargetSubtargetInfo &tsi, const MachineInstr *instr1, const MachineInstr &instr2) {
     const RISCVSubtarget &subtarget = static_cast<const RISCVSubtarget &>(tsi);
     bool is_lea = false, is_ix_ld = false, is_cuw = false;
 
-    if (!subtarget.hasMacroFusion())
+    if (!subtarget.hasMacroFusion()) {
+        LLVM_DEBUG(dbgs() << "Not using macro fusion because subtarget does not have support.");
         return false;
+    } else {
+        LLVM_DEBUG(dbgs() << "Using macro fusion.");
+    }
 
     switch (instr2.getOpcode()) {
     case RISCV::LD:

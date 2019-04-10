@@ -67,6 +67,8 @@ RISCVTargetMachine::RISCVTargetMachine(const Target &T, const Triple &TT,
   initAsmInfo();
 }
 
+#define DEBUG_TYPE "rv_fusion"
+
 namespace {
 class RISCVPassConfig : public TargetPassConfig {
 public:
@@ -81,7 +83,10 @@ public:
   createMachineScheduler(MachineSchedContext *ctx) const override {
     ScheduleDAGMILive *DAG = createGenericSchedLive(ctx);
     if (EnableMacroFusion) {
+        LLVM_DEBUG(dbgs() << "RISC-V macro fusion enabled.\n");
         DAG->addMutation(createRISCVMacroFusionDAGMutation());
+    } else {
+        LLVM_DEBUG(dbgs() << "RISC-V macro fusion disabled.\n");
     }
     return DAG;
   }
