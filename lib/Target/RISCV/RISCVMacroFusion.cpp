@@ -7,6 +7,52 @@
 
 using namespace llvm;
 
+static bool is_ld(const MachineInstr *instr) {
+    switch (instr->getOpcode()) {
+    case RISCV::LD:
+    case RISCV::LW:
+    case RISCV::LB:
+    case RISCV::LBU:
+    case RISCV::LH:
+    case RISCV::LHU:
+        return true;
+    }
+
+    return false;
+}
+
+static bool is_slli(const MachineInstr *instr) {
+    switch (instr->getOpcode()) {
+    case RISCV::SLLI:
+    case RISCV::SLLIW:
+        return true;
+    }
+
+    return false;
+}
+
+static bool is_srli(const MachineInstr *instr) {
+    switch (instr->getOpcode()) {
+    case RISCV::SRLI:
+    case RISCV::SRLIW:
+        return true;
+    }
+
+    return false;
+}
+
+static bool is_add(const MachineInstr *instr) {
+    switch (instr->getOpcode()) {
+    case RISCV::ADD:
+    case RISCV::ADDW:
+    case RISCV::ADDI:
+    case RISCV::ADDIW:
+        return true;
+    }
+
+    return false;
+}
+
 static bool shouldScheduleAdjacent(const TargetInstrInfo &tii, const TargetSubtargetInfo &tsi, const MachineInstr *instr1, const MachineInstr &instr2) {
     const RISCVSubtarget &subtarget = static_cast<const RISCVSubtarget &>(tsi);
     bool is_lea = false, is_ix_ld = false, is_cuw = false;
@@ -18,20 +64,9 @@ static bool shouldScheduleAdjacent(const TargetInstrInfo &tii, const TargetSubta
         LLVM_DEBUG(dbgs() << "Using macro fusion.");
     }
 
-    switch (instr2.getOpcode()) {
-    case RISCV::LD:
-    case RISCV::ADD:
-    case RISCV::SRLI:
-        // assume that null is a wildcard
-        if (instr1 == nullptr)
-            return true;
-
-        is_lea = instr1->getOpcode() == RISCV::SLLI && instr2.getOpcode() == RISCV::ADD;
-        is_ix_ld = instr1->getOpcode() == RISCV::ADD && instr2.getOpcode() == RISCV::LD;
-        is_cuw = instr1->getOpcode() == RISCV::SLLI && instr2.getOpcode() == RISCV::SRLI;
-
-        break;
-    }
+    is_lea = is_slli(instr1) && is_add(&instr2);
+    is_ix_ld = is_add(instr1) && is_ld(&instr2);
+    is_cuw = is_slli(instr1) && is_srli(&instr2);
 
     return is_lea || is_ix_ld || is_cuw;
 }
